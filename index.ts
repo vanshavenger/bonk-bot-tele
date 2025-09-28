@@ -1,12 +1,15 @@
 import { Keypair } from "@solana/web3.js";
 import { Telegraf, Markup, Context } from "telegraf";
 import { message } from "telegraf/filters";
+import bs58 from "bs58";
 
 interface BotContext extends Context {
     match?: RegExpExecArray;
 }
 
 const USERS: Record<string, Keypair> = {};
+
+const PENDING_DELETIONS: Record<string, NodeJS.Timeout> = {};
 
 const hasWallet = (userId: string): boolean => !!USERS[userId];
 
@@ -136,7 +139,47 @@ const handleExportPrivateKey = async (ctx: BotContext) => {
         if (!userId) return;
         
         ctx.answerCbQuery();
-        return sendMessageWithKeyboard(ctx, "🔐 Export Private Key button clicked!", userId);
+        
+        if (!USERS[userId]) {
+            return sendMessageWithKeyboard(ctx, "❌ No wallet found! Please generate a wallet first.", userId);
+        }
+        
+        if (PENDING_DELETIONS[userId]) {
+            return sendMessageWithKeyboard(
+                ctx, 
+                "⏱️ You already have a private key message that will be deleted soon. Please wait before requesting another one.", 
+                userId
+            );
+        }
+        
+        const privateKeyArray = Array.from(USERS[userId].secretKey);
+        const privateKeyBase58 = USERS[userId].secretKey;
+        const privateKeyString = bs58.encode(privateKeyBase58);
+        
+        const warningMessage = `🔐 **Your Private Key** ⚠️\n\n` +
+            `**WARNING:** Never share your private key with anyone! Anyone with access to this key can control your wallet.\n\n` +
+            `**Private Key (Base58):**\n\`${privateKeyString}\`\n\n` +
+            `**Private Key (Array):**\n\`[${privateKeyArray.join(',')}]\`\n\n` +
+            `🚨 **This message will self-delete in 30 seconds for security!**\n` +
+            `💾 **Copy your private key NOW!**`;
+        
+        const sentMessage = await ctx.sendMessage(warningMessage, {
+            parse_mode: "Markdown",
+            ...getKeyboard(userId, true)
+        });
+        
+        PENDING_DELETIONS[userId] = setTimeout(async () => {
+            try {
+                await ctx.deleteMessage(sentMessage.message_id);
+                console.log(`Auto-deleted private key message for user ${userId}`);
+            } catch (error) {
+                console.error("Failed to delete private key message:", error);
+            } finally {
+                delete PENDING_DELETIONS[userId];
+            }
+        }, 30000);
+        
+        return sentMessage;
     } catch (error) {
         return handleError(error, ctx, "export_private_key");
     }
