@@ -1,6 +1,10 @@
 # bonk-bot-tele
 
-To install dependencies:
+A Telegram bot for Solana wallet management on devnet.
+
+## Setup
+
+### 1. Install dependencies:
 
 ```bash
 bun install
